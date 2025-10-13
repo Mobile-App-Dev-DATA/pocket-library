@@ -1,11 +1,8 @@
 package com.example.pocket_library
 
-import android.content.res.Resources
 import android.util.Log
-import androidx.compose.ui.graphics.PathFillType
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -27,9 +24,9 @@ data class Search(
 )
 class LibraryViewModel : ViewModel() {
     data class State(
-        val favourites:List<Book> = emptyList(),
+        val favourites:List<Books> = emptyList(),
         val search:Search = Search(),
-        val searchResults:List<Book> = emptyList()
+        val searchResults:List<Books> = emptyList()
     )
 
     val _state = MutableStateFlow<State>(State())
@@ -70,7 +67,7 @@ class LibraryViewModel : ViewModel() {
         }
     }
 
-    fun addFavourite(b:Book){
+    fun addFavourite(b:Books){
         if(state.value.favourites.indexOfFirst { it.id == b.id } == -1){
             _state.value = state.value.copy(favourites = state.value.favourites + b)
         }
@@ -86,7 +83,7 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if the id of updated book is not present in favourites list
      */
     @Throws(IllegalArgumentException::class)
-    fun changeFavourite(u:Book){
+    fun changeFavourite(u:Books){
         val idx = state.value.favourites.indexOfFirst { it.id == u.id }
         require(idx != -1){"cannot update favourite that does not exist"}
         val favourites = state.value.favourites.filterNot { it.id == u.id }
@@ -119,7 +116,7 @@ class LibraryViewModel : ViewModel() {
             shareBook(book)
         }
     }
-    fun shareBook(b:Book){
+    fun shareBook(b:Books){
         //TODO do API call to share book with contacts
         return
     }
@@ -128,7 +125,7 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookFromFavouritesById(id:Id_type):Book{
+    private fun getBookFromFavouritesById(id:Id_type):Books{
         val idx = state.value.favourites.indexOfFirst { it.id == id }
         require(idx != -1){"cannot get book that is not in favourites"}
         return state.value.favourites[idx]
@@ -137,7 +134,7 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookFromSearchResultsById(id:Id_type):Book{
+    private fun getBookFromSearchResultsById(id:Id_type):Books{
         val idx = state.value.searchResults.indexOfFirst { it.id == id }
         require(idx != -1){"cannot get book that is not in favourites"}
         return state.value.searchResults[idx]
@@ -146,7 +143,7 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookFromDataBaseById(id:Id_type):Book{
+    private fun getBookFromDataBaseById(id:Id_type):Books{
         //TODO
         return state.value.searchResults[0]
     }
@@ -154,7 +151,7 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookById(id:Id_type):Book{
+    private fun getBookById(id:Id_type):Books{
         try{
             return getBookFromFavouritesById(id)
         }catch(e: IllegalArgumentException){}
@@ -193,17 +190,17 @@ class LibraryViewModel : ViewModel() {
     private fun syncFavouriteBooksInternet(){
         //TODO implement API call
     }
-    private fun getBookFromSearchResults(id:Id_type):Book?{
+    private fun getBookFromSearchResults(id:Id_type):Books?{
         Log.d("VM - lookup","searching for book of id $id in search results")
         //TODO implement API call
         return null
     }
-    private fun getBookFromDataBase(id:Id_type):Book?{
+    private fun getBookFromDataBase(id:Id_type):Books?{
         Log.d("VM - lookup","searching for book of id $id in database")
         //TODO implement API call
         return null
     }
-    private fun doSearch():List<Book>{
+    private fun doSearch():List<Books>{
         val searchVal = search.value
         //TODO implement API call
         return emptyList()
