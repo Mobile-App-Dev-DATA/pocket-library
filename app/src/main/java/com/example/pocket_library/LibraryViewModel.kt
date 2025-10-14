@@ -3,9 +3,12 @@ package com.example.pocket_library
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.NoSuchElementException
 
 data class Book(
@@ -23,59 +26,79 @@ data class Search(
     val year: Year_type? = null
 )
 class LibraryViewModel : ViewModel() {
-    data class State(
-        val favourites:List<Books> = emptyList(),
-        val search:Search = Search(),
-        val searchResults:List<Books> = emptyList()
-    )
+    class FavouriteList : ArrayList<Book>() {
+        var syncJob : Job? = null
+        val mutex = Mutex()
 
-    val _state = MutableStateFlow<State>(State())
-    val state : StateFlow<State> = _state
+        fun isLoading():Boolean{
+            return !(syncJob?.isCompleted ?: true)
+        }
+    }
+    val _favourites = MutableStateFlow<FavouriteList>(FavouriteList())
+    val favourites : StateFlow<List<Book>> = _favourites
+
+    var search_job:Job? = null
+    val search_mutex = Mutex()
+    val _search = MutableStateFlow<Search>(Search())
+    val search : StateFlow<Search> = _search
+
+    val _searchResults = MutableStateFlow<List<Book>>(emptyList())
+    val searchResults : StateFlow<List<Book>> = _searchResults
 
     init {
-        viewModelScope.launch { state.collect {
-            //TODO preform sync
-        } }
+        _favourites = loadFavourites()
     }
 
-    fun setSearchTitle(t:String){
-        setSearch(state.value.search.copy(title=t))
+    init {
+        viewModelScope.launch {
+            favourites.collect {
+                _favourites.value.mutex.withLock {
+                    _favourites.value.syncJob?.cancel()
+                    _favourites.value.syncJob = viewModelScope.launch {
+                        viewModelScope.launch{
+                            //TODO:sync favourites with local data base
+                        }
+                        Thread.sleep(5000)
+                        viewModelScope.launch{
+                            //TODO:sync local database with internet
+                        }
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            search.collect {
+                search_mutex.withLock {
+                    search_job?.cancel()
+                    search_job = viewModelScope.launch {
+                        Thread.sleep(300)
+                        viewModelScope.launch {
+                            //TODO: get results from database
+                        }
+                    }
+                }
+            }
+        }
     }
-    fun setSearchAuthor(a:String){
-        setSearch(state.value.search.copy(author = a))
-    }
-    fun setSearchYear(y:Year_type){
-        setSearch(state.value.search.copy(year = y))
+
+    fun setSearch(title:String? = null, author:String? = null, year: Year_type? = null){
+        val s = _search.value
+        setSearch(_search.value.copy(title=title?:s.title,author=author?:s.author,year=year?:s.year))
     }
     fun setSearch(s:Search){
-        _state.value = state.value.copy(search = s)
+        _search.value = s
     }
 
-    /**
-     * @throws NoSuchElementException if book of id cannot be found in search results or on database
-     */
-    @Throws(NoSuchElementException::class)
-    fun addFavourite(id:Id_type){
-        var book = getBookFromSearchResults(id)
-        if (book == null){
-            book = getBookFromDataBase(id)
-        }
-        if (book == null){
-            throw NoSuchElementException("book of id $id was not found in search results or database")
-        }else{
-            addFavourite(book)
+    fun addFavourite(b:Book){
+        if(favourites.value.indexOfFirst { it.id == b.id } == -1){
+            _favourites.value = (_favourites.value + b) as FavouriteList
         }
     }
 
-    fun addFavourite(b:Books){
-        if(state.value.favourites.indexOfFirst { it.id == b.id } == -1){
-            _state.value = state.value.copy(favourites = state.value.favourites + b)
-        }
-    }
     fun removeFavourite(id:Id_type){
-        val idx = state.value.favourites.indexOfFirst { it.id == id }
+        val idx = favourites.value.indexOfFirst { it.id == id }
         if (idx != -1){
-            _state.value = state.value.copy(favourites = state.value.favourites.filterNot{it.id == id})
+            _favourites.value = _favourites.value.filterNot{it.id == id} as FavouriteList
         }
     }
 
@@ -83,11 +106,19 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if the id of updated book is not present in favourites list
      */
     @Throws(IllegalArgumentException::class)
-    fun changeFavourite(u:Books){
+    fun changeFavourite(u:Book){
         val idx = state.value.favourites.indexOfFirst { it.id == u.id }
         require(idx != -1){"cannot update favourite that does not exist"}
         val favourites = state.value.favourites.filterNot { it.id == u.id }
         _state.value = state.value.copy(favourites=favourites+u)
+    }
+
+    fun addOrChangeFavourite(b:Book){
+        try{
+            changeFavourite(b)
+        }catch (e: IllegalArgumentException){
+            addFavourite(b)
+        }
     }
 
     /**
@@ -96,7 +127,7 @@ class LibraryViewModel : ViewModel() {
      */
     @Throws(IllegalStateException::class, IllegalArgumentException::class)
     fun addPersonalPhoto(id:Id_type){
-        val book = getBookFromFavouritesById(id)
+        val book = getBookFromFavourites(id)
         val photo = takePhoto()
         changeFavourite(book.copy(myPicture = photo))
     }
@@ -106,7 +137,10 @@ class LibraryViewModel : ViewModel() {
      */
     @Throws(NoSuchElementException::class)
     fun shareBook(id:Id_type){
-        var book = getBookFromSearchResults(id)
+        var book = getBookFromFavourites(id)
+        if (book == null){
+            book = getBookFromSearchResults(id)
+        }
         if (book == null){
             book = getBookFromDataBase(id)
         }
@@ -116,7 +150,7 @@ class LibraryViewModel : ViewModel() {
             shareBook(book)
         }
     }
-    fun shareBook(b:Books){
+    fun shareBook(b:Book){
         //TODO do API call to share book with contacts
         return
     }
@@ -125,7 +159,14 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookFromFavouritesById(id:Id_type):Books{
+    private fun getBookFromFavourites(b:Book):Book{
+        return getBookFromFavourites(b.id)
+    }
+    /**
+     * @throws IllegalArgumentException if book was not present in argument
+     */
+    @Throws(IllegalStateException::class)
+    private fun getBookFromFavourites(id:Id_type):Book{
         val idx = state.value.favourites.indexOfFirst { it.id == id }
         require(idx != -1){"cannot get book that is not in favourites"}
         return state.value.favourites[idx]
@@ -134,7 +175,7 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookFromSearchResultsById(id:Id_type):Books{
+    private fun getBookFromSearchResults(id:Id_type):Book{
         val idx = state.value.searchResults.indexOfFirst { it.id == id }
         require(idx != -1){"cannot get book that is not in favourites"}
         return state.value.searchResults[idx]
@@ -143,20 +184,19 @@ class LibraryViewModel : ViewModel() {
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookFromDataBaseById(id:Id_type):Books{
+    private fun getBookFromDataBaseById(id:Id_type):Book{
         //TODO
-        return state.value.searchResults[0]
     }
     /**
      * @throws IllegalArgumentException if book was not present in argument
      */
     @Throws(IllegalStateException::class)
-    private fun getBookById(id:Id_type):Books{
+    private fun getBookById(id:Id_type):Book{
         try{
-            return getBookFromFavouritesById(id)
+            return getBookFromFavourites(id)
         }catch(e: IllegalArgumentException){}
         try{
-            return getBookFromSearchResultsById(id)
+            return getBookFromSearchResults(id)
         }catch(e: IllegalArgumentException){}
         try{
             return getBookFromDataBaseById(id)
@@ -179,6 +219,9 @@ class LibraryViewModel : ViewModel() {
         //TODO implement API call
         return null
     }
+    private fun loadFavourites():List<Book>{
+        //TODO
+    }
     private fun syncFavouriteBooks(){
         Log.d("VM - database syncing","Syncing favourite books with database")
         syncFavouriteBooksLocal()
@@ -190,19 +233,9 @@ class LibraryViewModel : ViewModel() {
     private fun syncFavouriteBooksInternet(){
         //TODO implement API call
     }
-    private fun getBookFromSearchResults(id:Id_type):Books?{
-        Log.d("VM - lookup","searching for book of id $id in search results")
-        //TODO implement API call
-        return null
-    }
-    private fun getBookFromDataBase(id:Id_type):Books?{
+    private fun getBookFromDataBase(id:Id_type):Book?{
         Log.d("VM - lookup","searching for book of id $id in database")
         //TODO implement API call
         return null
-    }
-    private fun doSearch():List<Books>{
-        val searchVal = search.value
-        //TODO implement API call
-        return emptyList()
     }
 }

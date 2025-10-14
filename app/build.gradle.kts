@@ -43,7 +43,7 @@ android {
 dependencies {
 
     val room_version = "2.7.2"
-    implementation("androidx.room:room-runtime:${room_version}")
+    implementation(libs.androidx.room.runtime)
     ksp("androidx.room:room-compiler:$room_version")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

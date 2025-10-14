@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Books::class], version = 1, exportSchema = false)
+@Database(entities = [DataBaseBook::class], version = 1, exportSchema = false)
 abstract class BooksDatabase : RoomDatabase() {
 
     abstract fun booksDao(): BooksDAO
@@ -17,13 +17,15 @@ abstract class BooksDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): BooksDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    BooksDatabase::class.java,
-                    "books_database"
-                ).build()
-                INSTANCE = instance
-                instance
+                (INSTANCE ?: {
+                    val instance = Room.databaseBuilder(
+                        context.applicationContext,
+                        BooksDatabase::class.java,
+                        "books_database"
+                    ).build()
+                    INSTANCE = instance
+                    instance
+                }) as BooksDatabase
             }
         }
     }
