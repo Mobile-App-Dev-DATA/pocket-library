@@ -1,241 +1,145 @@
 package com.example.pocket_library
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlin.NoSuchElementException
+import kotlin.math.min
 
-data class Book(
-    val id: Id_type,
-    val title: String,
-    val author: String,
-    val year: Year_type,
-    val coverImg: Img_type?,
-    val myPicture: Img_type?
-)
-
-data class Search(
-    val title: String = "",
-    val author: String = "",
-    val year: Year_type? = null
-)
 class LibraryViewModel : ViewModel() {
-    class FavouriteList : ArrayList<Book>() {
-        var syncJob : Job? = null
-        val mutex = Mutex()
+    private class LocalInternetSynchronizer(val vm : LibraryViewModel){
+        val minNoInternetWaitTimeMills : Long = 1
+        val maxNoInternetWaitTimeMills : Long = 10000
+        private var synchronizationJob : Job? = null
 
-        fun isLoading():Boolean{
-            return !(syncJob?.isCompleted ?: true)
+        enum class SYNCJOB{
+            NONE,UPLOAD,DOWNLOAD
         }
-    }
-    val _favourites = MutableStateFlow<FavouriteList>(FavouriteList())
-    val favourites : StateFlow<List<Book>> = _favourites
+        private var _currentJob : SYNCJOB = SYNCJOB.NONE
+        fun getCurrentJob(): SYNCJOB{return _currentJob}
+        fun isSyncing(): Boolean {return getCurrentJob() != SYNCJOB.NONE }
 
-    var search_job:Job? = null
-    val search_mutex = Mutex()
-    val _search = MutableStateFlow<Search>(Search())
-    val search : StateFlow<Search> = _search
+        fun stop(){
+            val oldJob = synchronizationJob
+            synchronizationJob = null
+            oldJob?.cancel()
+            _currentJob = SYNCJOB.NONE
+        }
 
-    val _searchResults = MutableStateFlow<List<Book>>(emptyList())
-    val searchResults : StateFlow<List<Book>> = _searchResults
-
-    init {
-        _favourites = loadFavourites()
-    }
-
-    init {
-        viewModelScope.launch {
-            favourites.collect {
-                _favourites.value.mutex.withLock {
-                    _favourites.value.syncJob?.cancel()
-                    _favourites.value.syncJob = viewModelScope.launch {
-                        viewModelScope.launch{
-                            //TODO:sync favourites with local data base
+        fun upload(){
+            stop()
+            _currentJob = SYNCJOB.UPLOAD
+            synchronizationJob = vm.viewModelScope.launch{
+                val localFaves : List<Book> = vm.state.value.favList
+                vm.viewModelScope.launch {
+                    API.setFavouritesLocal(localFaves)
+                }.join()        // this ensures that the API call runs synchronously with this function, but if this function is canceled
+                                // it will not effect the API call
+                var updatePushed : Boolean = false
+                var waitTimeMills : Long = minNoInternetWaitTimeMills
+                while(!updatePushed) {
+                    vm.viewModelScope.launch {
+                        try {
+                            API.setFavouritesInternet(localFaves)
+                            updatePushed = true
+                        }catch (e : NoInternetException){
+                            // reattempt, as while loop is not broken.  new job is launched as this will break loop
+                            // if sync job is canceled
+                            Thread.sleep(waitTimeMills)
+                            waitTimeMills *= 2
+                            waitTimeMills = min(waitTimeMills, maxNoInternetWaitTimeMills)
                         }
-                        Thread.sleep(5000)
-                        viewModelScope.launch{
-                            //TODO:sync local database with internet
-                        }
-                    }
+                    }.join()
                 }
+                stop()
             }
         }
-        viewModelScope.launch {
-            search.collect {
-                search_mutex.withLock {
-                    search_job?.cancel()
-                    search_job = viewModelScope.launch {
-                        Thread.sleep(300)
-                        viewModelScope.launch {
-                            //TODO: get results from database
+        fun download(){
+            stop()
+            _currentJob = SYNCJOB.DOWNLOAD
+            synchronizationJob = vm.viewModelScope.launch {
+                var favList : List<Book>? = null
+                var updatePulled : Boolean = false
+                var waitTimeMills : Long = minNoInternetWaitTimeMills
+                while(!updatePulled){
+                    vm.viewModelScope.launch {
+                        try {
+                            favList = API.getFavouritesInternet()
+                            updatePulled = true
+                        }catch(e: NoInternetException){
+                            Thread.sleep(waitTimeMills)
+                            waitTimeMills *= 2
+                            waitTimeMills = min(waitTimeMills, maxNoInternetWaitTimeMills)
                         }
-                    }
+                    }.join()
                 }
+                vm.viewModelScope.launch {
+                    API.setFavouritesLocal(favList?:emptyList())
+                }.join()
+                vm._state.value = vm.state.value.copy(favList = favList?:emptyList())
+            }
+        }
+    }
+    private val localInternetSynchronizer = LocalInternetSynchronizer(this)
+
+
+    data class State(
+        val favList : List<Book> = emptyList(),
+        val search : Search = Search(),
+        val searchResults : List<Book> = emptyList()
+    ){
+        data class Search(
+            val title: String = "",
+            val author: String = "",
+            val year: Year_type? = null
+        )
+    }
+    private val _state = MutableStateFlow(State())
+    val state : StateFlow<State> = _state
+
+    init {
+        localInternetSynchronizer.download()
+        API.observeInternetStatus{ isConnected ->
+            if(isConnected){
+                localInternetSynchronizer.upload()
             }
         }
     }
 
-    fun setSearch(title:String? = null, author:String? = null, year: Year_type? = null){
-        val s = _search.value
-        setSearch(_search.value.copy(title=title?:s.title,author=author?:s.author,year=year?:s.year))
-    }
-    fun setSearch(s:Search){
-        _search.value = s
+    fun setSearch(title : String? = null, author : String? = null, year : Year_type? = null){
+        val oldSearch = state.value.search
+        _state.value = state.value.copy(search = state.value.search.copy(title = title ?: oldSearch.title, author = author ?: oldSearch.author, year = year ?: oldSearch.year))
     }
 
-    fun addFavourite(b:Book){
-        if(favourites.value.indexOfFirst { it.id == b.id } == -1){
-            _favourites.value = (_favourites.value + b) as FavouriteList
+    fun addFavourite(book : Book):Unit {
+        if(book !in state.value.favList) {
+            updateFavList(state.value.favList + book)
         }
     }
 
-    fun removeFavourite(id:Id_type){
-        val idx = favourites.value.indexOfFirst { it.id == id }
-        if (idx != -1){
-            _favourites.value = _favourites.value.filterNot{it.id == id} as FavouriteList
+    fun removeFavourite(book : Book):Unit {
+        if(state.value.favList.any{it.id == book.id}){
+            updateFavList(state.value.favList.filterNot { it.id == book.id })
         }
     }
 
-    /**
-     * @throws IllegalArgumentException if the id of updated book is not present in favourites list
-     */
-    @Throws(IllegalArgumentException::class)
-    fun changeFavourite(u:Book){
-        val idx = state.value.favourites.indexOfFirst { it.id == u.id }
-        require(idx != -1){"cannot update favourite that does not exist"}
-        val favourites = state.value.favourites.filterNot { it.id == u.id }
-        _state.value = state.value.copy(favourites=favourites+u)
+    fun addPersonalPhotoToFavourite(book : Book) {
+        val idx = state.value.favList.indexOf(book)
+        require(idx != -1) { "book {id:${book.id},title:${book.title},year:${book.year}} was not present in fav list" }
+        val photo = API.takePhoto()
+        updateFavList(state.value.favList.mapIndexed { ii, element ->
+            if(ii == idx) element.copy(myPicture = photo) else element
+        })
     }
 
-    fun addOrChangeFavourite(b:Book){
-        try{
-            changeFavourite(b)
-        }catch (e: IllegalArgumentException){
-            addFavourite(b)
-        }
-    }
+    fun shareBook(book:Book):Unit
 
-    /**
-     * @throws IllegalArgumentException if id is not in favourites
-     * @throws IllegalStateException if camera fails to respond
-     */
-    @Throws(IllegalStateException::class, IllegalArgumentException::class)
-    fun addPersonalPhoto(id:Id_type){
-        val book = getBookFromFavourites(id)
-        val photo = takePhoto()
-        changeFavourite(book.copy(myPicture = photo))
-    }
+    fun shareBook(id:Id_type):Unit
 
-    /**
-     * @throws NoSuchElementException if id is not present in search or database
-     */
-    @Throws(NoSuchElementException::class)
-    fun shareBook(id:Id_type){
-        var book = getBookFromFavourites(id)
-        if (book == null){
-            book = getBookFromSearchResults(id)
-        }
-        if (book == null){
-            book = getBookFromDataBase(id)
-        }
-        if (book == null){
-            throw NoSuchElementException("book of id $id was not found in search results or database")
-        }else{
-            shareBook(book)
-        }
-    }
-    fun shareBook(b:Book){
-        //TODO do API call to share book with contacts
-        return
-    }
-
-    /**
-     * @throws IllegalArgumentException if book was not present in argument
-     */
-    @Throws(IllegalStateException::class)
-    private fun getBookFromFavourites(b:Book):Book{
-        return getBookFromFavourites(b.id)
-    }
-    /**
-     * @throws IllegalArgumentException if book was not present in argument
-     */
-    @Throws(IllegalStateException::class)
-    private fun getBookFromFavourites(id:Id_type):Book{
-        val idx = state.value.favourites.indexOfFirst { it.id == id }
-        require(idx != -1){"cannot get book that is not in favourites"}
-        return state.value.favourites[idx]
-    }
-    /**
-     * @throws IllegalArgumentException if book was not present in argument
-     */
-    @Throws(IllegalStateException::class)
-    private fun getBookFromSearchResults(id:Id_type):Book{
-        val idx = state.value.searchResults.indexOfFirst { it.id == id }
-        require(idx != -1){"cannot get book that is not in favourites"}
-        return state.value.searchResults[idx]
-    }
-    /**
-     * @throws IllegalArgumentException if book was not present in argument
-     */
-    @Throws(IllegalStateException::class)
-    private fun getBookFromDataBaseById(id:Id_type):Book{
-        //TODO
-    }
-    /**
-     * @throws IllegalArgumentException if book was not present in argument
-     */
-    @Throws(IllegalStateException::class)
-    private fun getBookById(id:Id_type):Book{
-        try{
-            return getBookFromFavourites(id)
-        }catch(e: IllegalArgumentException){}
-        try{
-            return getBookFromSearchResults(id)
-        }catch(e: IllegalArgumentException){}
-        try{
-            return getBookFromDataBaseById(id)
-        }catch(e: IllegalArgumentException){
-            throw IllegalArgumentException("could not find book of id $id in favourites, search results or database")
-        }
-    }
-    @Throws(IllegalStateException::class)
-    private fun takePhoto():Img_type{
-        var image:Img_type? = null
-        try {
-            image = getPhotoFromAPI()
-        }catch(e: Exception){
-            throw IllegalStateException("an exception occurred while taking photo",e)
-        }
-        checkNotNull(image){"photo was not taken.  reason is unknown"}
-        return image
-    }
-    private fun getPhotoFromAPI():Img_type?{
-        //TODO implement API call
-        return null
-    }
-    private fun loadFavourites():List<Book>{
-        //TODO
-    }
-    private fun syncFavouriteBooks(){
-        Log.d("VM - database syncing","Syncing favourite books with database")
-        syncFavouriteBooksLocal()
-        syncFavouriteBooksInternet()
-    }
-    private fun syncFavouriteBooksLocal(){
-        //TODO implement API call
-    }
-    private fun syncFavouriteBooksInternet(){
-        //TODO implement API call
-    }
-    private fun getBookFromDataBase(id:Id_type):Book?{
-        Log.d("VM - lookup","searching for book of id $id in database")
-        //TODO implement API call
-        return null
+    private fun updateFavList(favList : List<Book>){
+        _state.value = state.value.copy(favList = favList)
+        localInternetSynchronizer.upload()
     }
 }
