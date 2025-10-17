@@ -9,66 +9,77 @@ import kotlinx.coroutines.launch
 import kotlin.math.min
 
 class LibraryViewModel : ViewModel() {
-    private class LocalInternetSynchronizer(val vm : LibraryViewModel){
+    private class InternetSynchronizer(val vm : LibraryViewModel){
         val minNoInternetWaitTimeMills : Long = 1
         val maxNoInternetWaitTimeMills : Long = 10000
         private var synchronizationJob : Job? = null
 
         enum class SYNCJOB{
-            NONE,UPLOAD,DOWNLOAD
+            NONE,UPLOAD,DOWNLOAD,DUPLEXSYNC
         }
         private var _currentJob : SYNCJOB = SYNCJOB.NONE
         fun getCurrentJob(): SYNCJOB{return _currentJob}
         fun isSyncing(): Boolean {return getCurrentJob() != SYNCJOB.NONE }
 
         fun stop(){
-            val oldJob = synchronizationJob
+            synchronizationJob?.cancel()
             synchronizationJob = null
-            oldJob?.cancel()
             _currentJob = SYNCJOB.NONE
         }
 
         fun upload(){
-            stop()
-            _currentJob = SYNCJOB.UPLOAD
-            synchronizationJob = vm.viewModelScope.launch{
-                val localFaves : List<Book> = vm.state.value.favList
-                vm.viewModelScope.launch {
-                    API.setFavouritesLocal(localFaves)
-                }.join()        // this ensures that the API call runs synchronously with this function, but if this function is canceled
-                                // it will not effect the API call
-                var updatePushed : Boolean = false
-                var waitTimeMills : Long = minNoInternetWaitTimeMills
-                while(!updatePushed) {
-                    vm.viewModelScope.launch {
-                        try {
-                            API.setFavouritesInternet(localFaves)
-                            updatePushed = true
-                        }catch (e : NoInternetException){
-                            // reattempt, as while loop is not broken.  new job is launched as this will break loop
-                            // if sync job is canceled
-                            Thread.sleep(waitTimeMills)
-                            waitTimeMills *= 2
-                            waitTimeMills = min(waitTimeMills, maxNoInternetWaitTimeMills)
-                        }
-                    }.join()
+            if(_currentJob == SYNCJOB.DUPLEXSYNC){return}//DUPLEXSYNC already preforms an upload
+            if(_currentJob == SYNCJOB.DOWNLOAD){
+                // download does not account for any new favourites added.  we must therefore preform the upload once the download completes
+                _currentJob = SYNCJOB.DUPLEXSYNC
+                synchronizationJob?.invokeOnCompletion{
+                    _currentJob = SYNCJOB.UPLOAD
+                    upload()
                 }
+            } else {
                 stop()
+                _currentJob = SYNCJOB.UPLOAD
+                synchronizationJob = vm.viewModelScope.launch {
+                    val localFaves: List<Book> = vm.state.value.favList
+                    vm.viewModelScope.launch {
+                        API.setFavouritesLocal(localFaves)
+                    }
+                        .join()        // this ensures that the API call runs synchronously with this function, but if this function is canceled
+                    // it will not effect the API call
+                    var updatePushed: Boolean = false
+                    var waitTimeMills: Long = minNoInternetWaitTimeMills
+                    while (!updatePushed) {
+                        vm.viewModelScope.launch {
+                            try {
+                                API.setFavouritesInternet(localFaves)
+                                updatePushed = true
+                            } catch (e: NoInternetException) {
+                                // reattempt, as while loop is not broken.  new job is launched as this will break loop
+                                // if sync job is canceled
+                                Thread.sleep(waitTimeMills)
+                                waitTimeMills *= 2
+                                waitTimeMills = min(waitTimeMills, maxNoInternetWaitTimeMills)
+                            }
+                        }.join()
+                    }
+                    _currentJob = SYNCJOB.NONE
+                }
             }
         }
         fun download(){
-            stop()
+            if (isSyncing()){return}  // to ensure slow connections still work, download will not overwrite self.  also, download is redundant after upload
             _currentJob = SYNCJOB.DOWNLOAD
             synchronizationJob = vm.viewModelScope.launch {
-                var favList : List<Book>? = null
+                var favList : List<Book> = vm.state.value.favList
                 var updatePulled : Boolean = false
                 var waitTimeMills : Long = minNoInternetWaitTimeMills
                 while(!updatePulled){
                     vm.viewModelScope.launch {
                         try {
-                            favList = API.getFavouritesInternet()
+                            val listOnFile = API.getFavouritesInternet()
+                            favList = (favList+listOnFile).toSet().toList()
                             updatePulled = true
-                        }catch(e: NoInternetException){
+                        }catch(e : NoInternetException){
                             Thread.sleep(waitTimeMills)
                             waitTimeMills *= 2
                             waitTimeMills = min(waitTimeMills, maxNoInternetWaitTimeMills)
@@ -76,13 +87,14 @@ class LibraryViewModel : ViewModel() {
                     }.join()
                 }
                 vm.viewModelScope.launch {
-                    API.setFavouritesLocal(favList?:emptyList())
+                    API.setFavouritesLocal(favList)
                 }.join()
-                vm._state.value = vm.state.value.copy(favList = favList?:emptyList())
+                vm._state.value = vm.state.value.copy(favList = favList)
+                _currentJob = SYNCJOB.NONE
             }
         }
     }
-    private val localInternetSynchronizer = LocalInternetSynchronizer(this)
+    private val internetSynchronizer = InternetSynchronizer(this)
 
 
     data class State(
@@ -100,12 +112,7 @@ class LibraryViewModel : ViewModel() {
     val state : StateFlow<State> = _state
 
     init {
-        localInternetSynchronizer.download()
-        API.observeInternetStatus{ isConnected ->
-            if(isConnected){
-                localInternetSynchronizer.upload()
-            }
-        }
+        internetSynchronizer.download()
     }
 
     fun setSearch(title : String? = null, author : String? = null, year : Year_type? = null){
@@ -119,7 +126,9 @@ class LibraryViewModel : ViewModel() {
         }
     }
 
+    @Throws(IllegalStateException::class)
     fun removeFavourite(book : Book):Unit {
+        check(API.isConnectedToInternet()){"Favourites cannot be removed while offline"}
         if(state.value.favList.any{it.id == book.id}){
             updateFavList(state.value.favList.filterNot { it.id == book.id })
         }
@@ -134,12 +143,12 @@ class LibraryViewModel : ViewModel() {
         })
     }
 
-    fun shareBook(book:Book):Unit
-
-    fun shareBook(id:Id_type):Unit
+    fun shareBook(book:Book, contact: Contact):Unit {
+        API.shareBook(book, contact)
+    }
 
     private fun updateFavList(favList : List<Book>){
         _state.value = state.value.copy(favList = favList)
-        localInternetSynchronizer.upload()
+        internetSynchronizer.upload()
     }
 }
