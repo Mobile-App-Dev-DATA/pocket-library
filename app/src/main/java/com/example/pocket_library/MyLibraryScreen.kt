@@ -23,10 +23,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun MyLibraryScreen(viewModel: LibraryViewModel) {
-    // ✅ Lecture pattern: Single collectAsState
     val state by viewModel.state.collectAsState()
-
-    // ✅ Lecture pattern: LocalConfiguration
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val isTablet = configuration.screenWidthDp >= 600
@@ -34,7 +31,6 @@ fun MyLibraryScreen(viewModel: LibraryViewModel) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedBook by remember { mutableStateOf<Book?>(null) }
 
-    // ✅ Lecture pattern: remember for derived state
     val filteredFavourites = remember(state.favList, searchQuery) {
         if (searchQuery.isBlank()) {
             state.favList
