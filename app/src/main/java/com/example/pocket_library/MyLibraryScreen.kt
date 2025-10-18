@@ -17,9 +17,23 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun MyLibraryScreen(viewModel: LibraryViewModel) {
-    val favourites by viewModel.favourites.collectAsState()
+    val state by viewModel.state.collectAsState()
+    val favourites = state.favList
+
     var searchQuery by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+
+    // Restore scroll position
+    LaunchedEffect(state.libraryScrollIndex) {
+        if (state.libraryScrollIndex > 0 && favourites.isNotEmpty()) {
+            listState.scrollToItem(state.libraryScrollIndex)
+        }
+    }
+
+    // Save scroll position
+    LaunchedEffect(listState.firstVisibleItemIndex) {
+        viewModel.updateLibraryScrollPosition(listState.firstVisibleItemIndex)
+    }
 
     val filteredFavourites = remember(favourites, searchQuery) {
         if (searchQuery.isBlank()) {
@@ -67,12 +81,11 @@ fun MyLibraryScreen(viewModel: LibraryViewModel) {
                 items(filteredFavourites, key = { it.id }) { book ->
                     LibraryBookCard(
                         book = book,
-                        onRemove = { viewModel.removeFavourite(book.id) },
-                        onAddPhoto = {
-                            // TODO: Implement camera functionality
-                        },
+                        onRemove = { viewModel.removeFavourite(book) },
+                        onAddPhoto = { viewModel.addPersonalPhotoToFavourite(book) },
                         onShare = {
-                            // TODO: Implement share functionality
+                            // TODO: Implement contact picker
+                            viewModel.shareBook(book, "contact@example.com")
                         }
                     )
                 }
@@ -88,12 +101,12 @@ fun LibraryBookCard(
     onAddPhoto: () -> Unit,
     onShare: () -> Unit
 ) {
-    var showMenu by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { showMenu = !showMenu }
+            .clickable { expanded = !expanded }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -117,7 +130,7 @@ fun LibraryBookCard(
                 }
             }
 
-            if (showMenu) {
+            if (expanded) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),

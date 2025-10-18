@@ -9,20 +9,36 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 @Composable
 fun SearchScreen(viewModel: LibraryViewModel) {
-    val searchResults by viewModel.searchResults.collectAsState()
-    val searchQuery by viewModel.search.collectAsState()
-    val favourites by viewModel.favourites.collectAsState()
+    val state by viewModel.state.collectAsState()
+    val searchQuery = state.search
+    val searchResults = state.searchResults
+    val favourites = state.favList
 
     var showManualEntry by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    // Restore scroll position
+    LaunchedEffect(state.searchScrollIndex) {
+        if (state.searchScrollIndex > 0 && searchResults.isNotEmpty()) {
+            listState.scrollToItem(state.searchScrollIndex)
+        }
+    }
+
+    // Save scroll position
+    LaunchedEffect(listState.firstVisibleItemIndex) {
+        viewModel.updateSearchScrollPosition(listState.firstVisibleItemIndex)
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TextField(
@@ -31,7 +47,12 @@ fun SearchScreen(viewModel: LibraryViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            label = { Text("Search books by title or author") }
+            label = { Text("Search books by title") },
+            trailingIcon = {
+                IconButton(onClick = { viewModel.performSearch() }) {
+                    Icon(Icons.Default.Search, contentDescription = "Search")
+                }
+            }
         )
 
         Row(
@@ -55,13 +76,31 @@ fun SearchScreen(viewModel: LibraryViewModel) {
             )
         }
 
-        Button(
-            onClick = { showManualEntry = true },
-            modifier = Modifier.padding(16.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(Icons.Default.Add, contentDescription = null)
+            Button(
+                onClick = { viewModel.performSearch() },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Search")
+            }
+
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Add Book Manually")
+
+            Button(
+                onClick = { showManualEntry = true },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Add Manually")
+            }
         }
 
         if (searchResults.isEmpty()) {
@@ -84,7 +123,7 @@ fun SearchScreen(viewModel: LibraryViewModel) {
                         isFavourite = favourites.any { it.id == book.id },
                         onFavouriteToggle = {
                             if (favourites.any { it.id == book.id }) {
-                                viewModel.removeFavourite(book.id)
+                                viewModel.removeFavourite(book)
                             } else {
                                 viewModel.addFavourite(book)
                             }
@@ -99,7 +138,15 @@ fun SearchScreen(viewModel: LibraryViewModel) {
         ManualEntryDialog(
             onDismiss = { showManualEntry = false },
             onSave = { title, author, year ->
-                // TODO: Add manual book entry
+                val manualBook = Book(
+                    id = "manual_${System.currentTimeMillis()}",
+                    title = title,
+                    author = author,
+                    year = year,
+                    coverImg = null,
+                    myPicture = null
+                )
+                viewModel.addFavourite(manualBook)
                 showManualEntry = false
             }
         )
