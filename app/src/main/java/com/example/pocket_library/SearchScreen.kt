@@ -24,10 +24,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun SearchScreen(viewModel: LibraryViewModel) {
-    // ✅ Lecture pattern: Single collectAsState at top
     val state by viewModel.state.collectAsState()
-
-    // ✅ Lecture pattern: LocalConfiguration for responsive UI
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val isTablet = configuration.screenWidthDp >= 600
