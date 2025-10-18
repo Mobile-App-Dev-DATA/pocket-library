@@ -16,6 +16,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import coil.compose.AsyncImage
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun SearchScreen(viewModel: LibraryViewModel) {
@@ -143,7 +146,7 @@ fun SearchScreen(viewModel: LibraryViewModel) {
                     title = title,
                     author = author,
                     year = year,
-                    coverImg = null,
+                    coverUrl = null,
                     myPicture = null
                 )
                 viewModel.addFavourite(manualBook)
@@ -169,6 +172,15 @@ fun BookCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+                // --- Book cover on the left ---
+                AsyncImage(
+                    model = book.coverUrl,
+                    contentDescription = "Book cover for ${book.title}",
+                    modifier = Modifier
+                        .size(64.dp)
+                        .padding(end = 16.dp)
+                )
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = book.title,

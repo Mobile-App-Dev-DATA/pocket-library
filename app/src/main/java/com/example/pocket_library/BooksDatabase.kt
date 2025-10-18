@@ -17,15 +17,13 @@ abstract class BooksDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): BooksDatabase {
             return INSTANCE ?: synchronized(this) {
-                (INSTANCE ?: {
-                    val instance = Room.databaseBuilder(
-                        context.applicationContext,
-                        BooksDatabase::class.java,
-                        "books_database"
-                    ).build()
-                    INSTANCE = instance
-                    instance
-                }) as BooksDatabase
+                val instance = Room.databaseBuilder(
+                    context.applicationContext,
+                    BooksDatabase::class.java,
+                    "books_database"
+                ).build()
+                INSTANCE = instance
+                instance
             }
         }
     }

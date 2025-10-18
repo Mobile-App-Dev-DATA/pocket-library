@@ -8,11 +8,11 @@ import androidx.room.Update
 @Dao
 interface BooksDAO {
     @Insert
-    suspend fun insert(vararg book: Books)
+    suspend fun insert(vararg book: DataBaseBook)
 
     @Update
-    suspend fun update(vararg book: Books)
+    suspend fun update(vararg book: DataBaseBook)
 
     @Delete
-    suspend fun delete(vararg book: Books)
+    suspend fun delete(vararg book: DataBaseBook)
 }

@@ -17,8 +17,8 @@ data class Book(
     val title: String,
     val author: String,
     val year: Year_type,
-    val coverImg: Img_type?,
-    val myPicture: Img_type?
+    val coverUrl: String? = null,
+    val myPicture: Img_type? = null
 )
 
 @Entity(tableName = "books")
@@ -26,7 +26,7 @@ data class DataBaseBook(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0L,
     @ColumnInfo(name = "ISBN")
-    val isbn: UInt,
+    val isbn: String,
     @ColumnInfo(name = "Title")
     val title: String,
     @ColumnInfo(name = "Author")
@@ -34,9 +34,9 @@ data class DataBaseBook(
     @ColumnInfo(name = "Year")
     val year: Int,
     @ColumnInfo(name = "Official Cover")
-    val officialCover: Drawable,
+    val officialCover: String, //url instead of drawable for testing purposes
     @ColumnInfo(name = "Personal Photo")
-    val personalPhoto: Drawable
+    val personalPhoto: String? // local uri path instead of drawable
 )
 
 fun interface BooleanObserver{
