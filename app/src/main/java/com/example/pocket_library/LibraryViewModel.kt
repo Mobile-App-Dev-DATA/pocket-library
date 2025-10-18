@@ -96,11 +96,13 @@ class LibraryViewModel : ViewModel() {
     }
     private val internetSynchronizer = InternetSynchronizer(this)
 
-
+    // FIXED: State declared ONCE with all fields
     data class State(
         val favList : List<Book> = emptyList(),
         val search : Search = Search(),
-        val searchResults : List<Book> = emptyList()
+        val searchResults : List<Book> = emptyList(),
+        val searchScrollIndex: Int = 0,
+        val libraryScrollIndex: Int = 0
     ){
         data class Search(
             val title: String = "",
@@ -108,6 +110,7 @@ class LibraryViewModel : ViewModel() {
             val year: Year_type? = null
         )
     }
+
     private val _state = MutableStateFlow(State())
     val state : StateFlow<State> = _state
 
@@ -118,6 +121,21 @@ class LibraryViewModel : ViewModel() {
     fun setSearch(title : String? = null, author : String? = null, year : Year_type? = null){
         val oldSearch = state.value.search
         _state.value = state.value.copy(search = state.value.search.copy(title = title ?: oldSearch.title, author = author ?: oldSearch.author, year = year ?: oldSearch.year))
+    }
+
+    fun performSearch() {
+        viewModelScope.launch {
+            try {
+                val results = API.getBooksMatchingSearch(
+                    title = state.value.search.title,
+                    author = state.value.search.author,
+                    year = state.value.search.year ?: ""
+                )
+                _state.value = state.value.copy(searchResults = results)
+            } catch (e: NoInternetException) {
+                _state.value = state.value.copy(searchResults = emptyList())
+            }
+        }
     }
 
     fun addFavourite(book : Book):Unit {
@@ -145,6 +163,14 @@ class LibraryViewModel : ViewModel() {
 
     fun shareBook(book:Book, contact: Contact):Unit {
         API.shareBook(book, contact)
+    }
+
+    fun updateSearchScrollPosition(index: Int) {
+        _state.value = state.value.copy(searchScrollIndex = index)
+    }
+
+    fun updateLibraryScrollPosition(index: Int) {
+        _state.value = state.value.copy(libraryScrollIndex = index)
     }
 
     private fun updateFavList(favList : List<Book>){
